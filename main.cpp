@@ -1,5 +1,7 @@
 #include <iostream>
+#include <sstream>
 
+#include <stdlib.h>
 
 #include <boost/filesystem.hpp>
 
@@ -9,15 +11,32 @@ extern "C" {
 
 namespace fs = boost::filesystem;
 
+enum VideoType {
+  kVType_SBS,
+  kVType_OU,
+  kVType_MONO,
+  kVType_2D
+};
+
 static fs::path g_input_file_;
 static fs::path g_output_path_;
 static fs::path g_output_file_;
 
 static std::string g_target_platform_ = "psvr";
+static std::string g_degree_str_ = "0";
 static unsigned long g_degree_ = 0;
+static std::string g_video_type_str_ = "mono";
+static VideoType g_video_type_ = kVType_MONO;
+
 
 void PrintHelp() {
   std::cout << "" << std::endl;
+  std::cout << "Required Parameters:" << std::endl;
+  std::cout << "  -i input_file - source file for encoding" << std::endl;
+  std::cout << "Optional Parameters:" << std::endl;
+  std::cout << "  -d degree - video degree. 0 (default) - for flat frame" << std::endl;
+  std::cout << "  -o output_folder - folder for output file. Default: forlder of source file" << std::endl;
+  std::cout << "  -t video_type - Available types: sbs, ou, mono, 2d. Default: mono" << std::endl;
 }
 
 void ParseArguments(int argc, char** argv) {
@@ -26,7 +45,7 @@ void ParseArguments(int argc, char** argv) {
     int ni = i + 1;
     bool niv = ni < argc;
     if (at == "-d" && niv) {
-      g_degree_ = strtoul(argv[ni], nullptr, 10);
+      g_degree_str_ = argv[ni];
       ++i;
       continue;
     }
@@ -41,19 +60,85 @@ void ParseArguments(int argc, char** argv) {
       continue;
     }
     if (at == "-t" && niv) {
+      g_video_type_str_ = argv[ni];
       ++i;
       continue;
     }
   }
 }
 
-void FormParameters() {
+bool CheckArguments() {
+  // Input file
+  if (g_input_file_.empty()) {
+    std::cerr << "Input file isn't specified" << std::endl;
+    return false;
+  }
+  if (!fs::is_regular_file(g_input_file_)) {
+    // File isn't exist
+    std::cerr << "Input file isn't exist" << std::endl;
+    return false;
+  }
+
+  // Degree
+  const char* dgr_begin = g_degree_str_.c_str();
+  const char* dgr_end = dgr_begin + g_degree_str_.size();
+  char* real_end = nullptr;
+  g_degree_ = strtoul(dgr_begin, &real_end, 10);
+  if (real_end != dgr_end) {
+    std::cerr << "Wrong video degree argument" << std::endl;
+    return false;
+  }
+  if (!(g_degree_ == 0 || g_degree_ == 180 || g_degree_ == 360)) {
+    std::cerr << "Wrong video degree value" << std::endl;
+    return false;
+  }
+
+  // Video Type
+  if (g_video_type_str_ == "sbs") {
+    g_video_type_ = kVType_SBS;
+  }
+  else if (g_video_type_str_ == "ou") {
+    g_video_type_ = kVType_OU;
+  }
+  else if (g_video_type_str_ == "mono") {
+    g_video_type_ = kVType_MONO;
+  }
+  else if (g_video_type_str_ == "2d") {
+    g_video_type_ = kVType_2D;
+  }
+  else {
+    std::cerr << "Wrong type of video" << std::endl;
+    return false;
+  }
+
+  // Output path/file
   if (g_output_path_.empty()) {
     g_output_path_ = g_input_file_.parent_path();
   }
-  auto name = g_input_file_.stem().string();
-  name += "_" + g_target_platform_;
-  g_output_file_ = g_output_path_ / name;
+  std::stringstream name;
+  name << g_input_file_.stem().string() << "_" << g_target_platform_;
+  switch (g_degree_) {
+    case 0:
+      if (g_video_type_ == kVType_MONO || g_video_type_ == kVType_2D) {
+        name << "_2dff.mp4";
+      }
+      else if (g_video_type_ == kVType_SBS || g_video_type_ == kVType_OU) {
+        name << "_3dff_" << g_video_type_str_ << ".mp4";
+      }
+      else {
+        assert(false);
+        std::cerr << "Logical error" << std::endl;
+        return false;
+      }
+      break;
+    case 180:
+    case 360:
+      name << g_degree_str_ + "_" << g_video_type_str_ << ".mp4";
+      break;
+  }
+  g_output_file_ = g_output_path_ / name.str();
+
+  return true;
 }
 
 void GetVideoInfo() {
@@ -85,21 +170,15 @@ void GetVideoInfo() {
 
 int main(int argc, char** argv)
 {
-  ParseArguments(argc, argv);
-  // Check parameters
-  if (!fs::is_regular_file(g_input_file_)) {
-    // File isn't exist
-    std::cerr << "Input file isn't exist" << std::endl;
+  if (argc <= 1) {
+    PrintHelp();
     return 1;
   }
 
-  FormParameters();
-
-
+  ParseArguments(argc, argv);
+  if (!CheckArguments()) { return 1; }
   // Detect video parameters
   GetVideoInfo();
-
-
 
 
   return 0;
