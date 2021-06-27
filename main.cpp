@@ -141,7 +141,7 @@ bool CheckArguments() {
       break;
     case 180:
     case 360:
-      name << g_degree_str_ + "_" << g_video_type_str_ << ".mp4";
+      name << "_" << g_degree_str_ + "_" << g_video_type_str_ << ".mp4";
       break;
   }
   g_output_file_ = g_output_path_ / name.str();
