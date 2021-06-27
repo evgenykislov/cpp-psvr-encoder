@@ -18,15 +18,23 @@ enum VideoType {
   kVType_2D
 };
 
+enum TargetPlatform {
+  kTarget_PSVR
+};
+
+const int kExtraWidth = 2560;
+
 static fs::path g_input_file_;
 static fs::path g_output_path_;
 static fs::path g_output_file_;
 
-static std::string g_target_platform_ = "psvr";
+static std::string g_target_platform_str_ = "psvr";
+static TargetPlatform g_target_platform_ = kTarget_PSVR;
 static std::string g_degree_str_ = "0";
 static unsigned long g_degree_ = 0;
 static std::string g_video_type_str_ = "mono";
 static VideoType g_video_type_ = kVType_MONO;
+static int g_video_width_ = 0;
 
 
 void PrintHelp() {
@@ -116,7 +124,7 @@ bool CheckArguments() {
     g_output_path_ = g_input_file_.parent_path();
   }
   std::stringstream name;
-  name << g_input_file_.stem().string() << "_" << g_target_platform_;
+  name << g_input_file_.stem().string() << "_" << g_target_platform_str_;
   switch (g_degree_) {
     case 0:
       if (g_video_type_ == kVType_MONO || g_video_type_ == kVType_2D) {
@@ -141,15 +149,16 @@ bool CheckArguments() {
   return true;
 }
 
-void GetVideoInfo() {
+bool GetVideoInfo() {
   auto ctx = avformat_alloc_context();
   if (!ctx) {
-    return;
+    std::cerr << "Memory error" << std::endl;
+    return false;
   }
   if (avformat_open_input(&ctx, g_input_file_.c_str(), nullptr, nullptr) == 0) {
     if (avformat_find_stream_info(ctx, nullptr) >= 0) {
-      std::cout << "Duration: " << ctx->duration << std::endl;
-      std::cout << "Bitrate: " << ctx->bit_rate << std::endl;
+//      std::cout << "Duration: " << ctx->duration << std::endl;
+//      std::cout << "Bitrate: " << ctx->bit_rate << std::endl;
 
       for (unsigned int i = 0; i < ctx->nb_streams; ++i) {
         auto& cdc = ctx->streams[i]->codecpar;
@@ -157,8 +166,8 @@ void GetVideoInfo() {
           continue;
         }
 
-        std::cout << "Width: " << cdc->width << std::endl;
-        std::cout << "Height: " << cdc->height << std::endl;
+        g_video_width_ = cdc->width;
+//        std::cout << "Height: " << cdc->height << std::endl;
         break;
       }
 
@@ -166,6 +175,77 @@ void GetVideoInfo() {
     avformat_close_input(&ctx);
   }
   avformat_free_context(ctx);
+
+  if (g_video_width_ <= 0) {
+    std::cerr << "Input file without video stream" << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+bool SelectCodecs() {
+  AVCodec* codec = nullptr;
+
+  codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+  if (!codec) {
+    std::cerr << "There isn't codec h264" << std::endl;
+    return false;
+  }
+
+  codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+  if (!codec) {
+    std::cerr << "There isn't codec aac" << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+void SetEncodingParameters(std::stringstream& cl) {
+  switch (g_target_platform_) {
+    case kTarget_PSVR:
+      cl << " -f mp4";
+      cl << " -vcodec libx264";
+      cl << " -b:v 15000k";
+      cl << " -ar 48000";
+      cl << " -ac 2";
+      cl << " -b:a 192k";
+      cl << " -pix_fmt yuv420p";
+      cl << " -profile:v High";
+      cl << " -level:v 5.1";
+      cl << " -bf 0";
+      cl << " -slices 24";
+      cl << " -refs 1";
+      cl << " -threads 0";
+      cl << " -x264opts no-cabac:aq-mode=1:aq-strength=0.7:slices=24:direct=spatial:me=tesa:subme=8:trellis=1";
+      cl << " -flags +global_header";
+      break;
+  }
+
+  cl << " -acodec aac";
+  cl << " -map_metadata -1";
+  int width = g_video_width_;
+  if (width > kExtraWidth) {
+    width  = kExtraWidth;
+  }
+  cl << " -vf scale=" << width << ":-1";
+}
+
+void RunEncoding() {
+  std::stringstream cl;
+
+  cl << "ffmpeg";
+
+  // Input file
+  cl << " -i " << g_input_file_;
+
+  SetEncodingParameters(cl);
+  // Output file
+  cl << " " << g_output_file_;
+
+  // Run convertation
+  std::system(cl.str().c_str());
 }
 
 int main(int argc, char** argv)
@@ -177,9 +257,12 @@ int main(int argc, char** argv)
 
   ParseArguments(argc, argv);
   if (!CheckArguments()) { return 1; }
+  if (!SelectCodecs()) { return 1; }
+
   // Detect video parameters
   GetVideoInfo();
+  RunEncoding();
 
-
+  std::cout << std::endl << "Convertation has complited" << std::endl;
   return 0;
 }
